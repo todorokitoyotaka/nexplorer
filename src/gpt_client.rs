@@ -7,10 +7,103 @@ use std::collections::HashMap;
 use std::sync::Mutex;
 use std::env;
 use std::time::{SystemTime, UNIX_EPOCH};
+use ignore::gitignore::{GitignoreBuilder, Gitignore};
+use std::io::{BufRead, BufReader};
 
 const MAX_FILE_SIZE: u64 = 1024 * 1024; // 1MB
 const MODEL: &str = "gpt-4o-mini";
 const CACHE_DIR: &str = ".cache";
+
+// File size thresholds for smart summary lengths
+const TINY_FILE_SIZE: u64 = 1024; // 1KB
+const SMALL_FILE_SIZE: u64 = 10 * 1024; // 10KB
+const MEDIUM_FILE_SIZE: u64 = 100 * 1024; // 100KB
+const LARGE_FILE_SIZE: u64 = 500 * 1024; // 500KB
+
+// Base summary length targets for different file sizes (English)
+const TINY_SUMMARY_LENGTH: u32 = 75;     // Increased base length
+const SMALL_SUMMARY_LENGTH: u32 = 150;   // Increased base length
+const MEDIUM_SUMMARY_LENGTH: u32 = 250;  // Increased base length
+const LARGE_SUMMARY_LENGTH: u32 = 350;   // Increased base length
+const VERY_LARGE_SUMMARY_LENGTH: u32 = 500; // Increased base length
+
+// File type specific length multipliers
+const FILE_TYPE_MULTIPLIERS: &[(&str, f32)] = &[
+    // Documentation files get longer summaries
+    ("md", 1.5),    // Markdown files need detailed summaries
+    ("txt", 1.3),   // Text files
+    ("rst", 1.5),   // ReStructuredText
+    ("adoc", 1.5),  // AsciiDoc
+    ("pdf", 1.5),   // PDF documentation
+    ("doc", 1.5),   // Word documents
+    ("docx", 1.5),  // Word documents (newer format)
+    
+    // Source code files get moderate summaries
+    ("rs", 1.2),    // Rust files
+    ("py", 1.2),    // Python files
+    ("js", 1.2),    // JavaScript files
+    ("ts", 1.2),    // TypeScript files
+    ("java", 1.2),  // Java files
+    ("cpp", 1.2),   // C++ files
+    ("c", 1.2),     // C files
+    ("go", 1.2),    // Go files
+    ("rb", 1.2),    // Ruby files
+    ("php", 1.2),   // PHP files
+    ("scala", 1.2), // Scala files
+    ("swift", 1.2), // Swift files
+    ("kt", 1.2),    // Kotlin files
+    
+    // Web-related files
+    ("html", 1.1),  // HTML files
+    ("css", 1.1),   // CSS files
+    ("scss", 1.1),  // SCSS files
+    ("sass", 1.1),  // Sass files
+    ("less", 1.1),  // Less files
+    ("jsx", 1.2),   // React JSX files
+    ("tsx", 1.2),   // React TSX files
+    ("vue", 1.2),   // Vue files
+    ("svelte", 1.2),// Svelte files
+    
+    // Configuration files need detailed summaries
+    ("json", 1.3),  // JSON files - increased multiplier for better config details
+    ("yaml", 1.3),  // YAML files
+    ("yml", 1.3),   // YML files
+    ("toml", 1.3),  // TOML files
+    ("ini", 1.2),   // INI files
+    ("env", 1.2),   // Environment files
+    ("conf", 1.2),  // Configuration files
+    ("config", 1.2),// Configuration files
+    
+    // Shell and script files get detailed summaries
+    ("sh", 1.4),    // Shell scripts
+    ("bash", 1.4),  // Bash scripts
+    ("zsh", 1.4),   // Zsh scripts
+    ("fish", 1.4),  // Fish scripts
+    ("ps1", 1.4),   // PowerShell scripts
+    ("bat", 1.4),   // Windows batch files
+    ("cmd", 1.4),   // Windows command files
+    
+    // Database files
+    ("sql", 1.3),   // SQL files
+    ("pgsql", 1.3), // PostgreSQL files
+    ("mysql", 1.3), // MySQL files
+    
+    // Build and package files
+    ("xml", 1.2),   // XML files
+    ("gradle", 1.2),// Gradle build files
+    ("pom", 1.2),   // Maven POM files
+    ("lock", 1.1),  // Lock files
+    ("cargo", 1.2), // Cargo.toml gets special handling
+    
+    // Special handling for Replit files
+    ("replit", 1.5), // .replit configuration
+    
+    // Default multiplier for unknown types
+    ("*", 1.0),     // Default multiplier
+];
+
+// Japanese language multiplier (approximately 50% more words needed)
+const JAPANESE_MULTIPLIER: f32 = 1.5;
 
 #[derive(Debug, Serialize, Deserialize)]
 struct ChatMessage {
@@ -50,17 +143,28 @@ pub struct GPTClient {
     summary_length: String,
     language: String,
     force_update: bool,
+    gitignore: Option<Gitignore>,
+    custom_patterns: Option<Vec<String>>,
+    smart_length: bool,
 }
 
 impl GPTClient {
-    pub fn new(summary_length: &str, language: &str, force_update: bool) -> Result<Self> {
+    pub fn new(summary_length: &str, language: &str, force_update: bool, custom_ignore: Option<&str>) -> Result<Self> {
         let api_key = env::var("OPENAI_API_KEY")
             .context("OPENAI_API_KEY environment variable is not set")?;
             
-        let max_tokens = match summary_length {
-            "short" => 50,
-            "long" => 200,
-            _ => 100, // medium or any other value
+        // Check if we should use smart length or fixed length
+        let (smart_length, max_tokens) = if summary_length == "smart" {
+            (true, MEDIUM_SUMMARY_LENGTH) // Default to medium for initial setup
+        } else if let Ok(custom_length) = summary_length.parse::<u32>() {
+            (false, custom_length)
+        } else {
+            (false, match summary_length {
+                "short" => 50,
+                "long" => 200,
+                "super" => 500,
+                _ => 100, // medium or any other value
+            })
         };
 
         // Create cache directory if it doesn't exist
@@ -68,6 +172,20 @@ impl GPTClient {
         if !cache_dir.exists() {
             fs::create_dir_all(&cache_dir)?;
         }
+
+        // Initialize gitignore
+        let mut builder = GitignoreBuilder::new(".");
+        if Path::new(".gitignore").exists() {
+            builder.add(".gitignore");
+        }
+        let gitignore = builder.build().ok();
+
+        // Parse custom ignore patterns
+        let custom_patterns = custom_ignore.map(|patterns| {
+            patterns.split(',')
+                .map(|s| s.trim().to_string())
+                .collect::<Vec<String>>()
+        });
 
         Ok(Self {
             api_key,
@@ -77,7 +195,111 @@ impl GPTClient {
             summary_length: summary_length.to_string(),
             language: language.to_string(),
             force_update,
+            gitignore,
+            custom_patterns,
+            smart_length,
         })
+    }
+
+    /// Determines if a file should be ignored based on the following rules:
+    /// 1. First checks .gitignore patterns if a .gitignore file exists
+    /// 2. Then checks custom ignore patterns if provided:
+    ///    - Supports glob patterns (e.g., *.log, target/*)
+    ///    - Supports simple substring matching for non-glob patterns
+    fn should_ignore(&self, path: &Path) -> bool {
+        let path_str = path.to_string_lossy();
+
+        // Check gitignore rules
+        if let Some(ref gitignore) = self.gitignore {
+            if gitignore.matched_path_or_any_parents(path, path.is_dir()).is_ignore() {
+                return true;
+            }
+        }
+
+        // Check custom patterns
+        if let Some(ref patterns) = self.custom_patterns {
+            for pattern in patterns {
+                if pattern.contains('*') {
+                    // Simple glob pattern matching
+                    let regex_pattern = pattern
+                        .replace(".", "\\.")
+                        .replace("*", ".*")
+                        .replace("?", ".");
+                    if let Ok(regex) = regex::Regex::new(&format!("^{}$", regex_pattern)) {
+                        if regex.is_match(&path_str) {
+                            return true;
+                        }
+                    }
+                } else if path_str.contains(pattern) {
+                    // Simple substring matching for non-glob patterns
+                    return true;
+                }
+            }
+        }
+
+        false
+    }
+
+    fn get_file_type_multiplier(&self, path: &Path) -> f32 {
+        // Check for shell script by extension or shebang
+        let is_shell_script = path.extension()
+            .and_then(|ext| ext.to_str())
+            .map(|ext| matches!(ext.to_lowercase().as_str(), "sh" | "bash" | "zsh"))
+            .unwrap_or(false);
+
+        if is_shell_script {
+            return 1.4; // Shell script multiplier
+        }
+
+        // Check for shebang in first line
+        if let Ok(file) = fs::File::open(path) {
+            let reader = BufReader::new(file);
+            if let Some(Ok(first_line)) = reader.lines().next() {
+                if first_line.starts_with("#!") && 
+                   (first_line.contains("/bin/bash") || 
+                    first_line.contains("/bin/sh") || 
+                    first_line.contains("/bin/zsh")) {
+                    return 1.4; // Shell script multiplier
+                }
+            }
+        }
+
+        // Check by extension for other file types
+        path.extension()
+            .and_then(|ext| ext.to_str())
+            .map(|ext| {
+                FILE_TYPE_MULTIPLIERS
+                    .iter()
+                    .find(|&&(file_type, _)| file_type == ext)
+                    .map(|(_, multiplier)| *multiplier)
+                    .unwrap_or(1.0)
+            })
+            .unwrap_or(1.0)
+    }
+
+    fn calculate_summary_length(&self, file_size: u64, path: &Path) -> u32 {
+        if !self.smart_length {
+            return self.max_tokens;
+        }
+
+        let base_length = match file_size {
+            size if size <= TINY_FILE_SIZE => TINY_SUMMARY_LENGTH,
+            size if size <= SMALL_FILE_SIZE => SMALL_SUMMARY_LENGTH,
+            size if size <= MEDIUM_FILE_SIZE => MEDIUM_SUMMARY_LENGTH,
+            size if size <= LARGE_FILE_SIZE => LARGE_SUMMARY_LENGTH,
+            _ => VERY_LARGE_SUMMARY_LENGTH,
+        };
+
+        // Apply file type multiplier
+        let file_type_multiplier = self.get_file_type_multiplier(path);
+        let length_with_type = (base_length as f32 * file_type_multiplier) as u32;
+
+        // Apply Japanese language multiplier if needed
+        if self.language.to_lowercase() == "japanese" {
+            (length_with_type as f32 * JAPANESE_MULTIPLIER) as u32
+        } else {
+            length_with_type
+        }
     }
 
     fn calculate_content_hash(&self, content: &str, query: Option<&str>) -> String {
@@ -146,6 +368,10 @@ impl GPTClient {
     }
 
     pub async fn summarize_file(&self, path: &Path, custom_query: Option<&str>) -> Result<Option<String>> {
+        if self.should_ignore(path) {
+            return Ok(None);
+        }
+
         if !self.is_supported_file(path) {
             return Ok(None);
         }
@@ -167,22 +393,51 @@ impl GPTClient {
             return Ok(Some(cached_summary));
         }
 
-        // Generate new summary if not in cache
-        let summary = if let Some(query) = custom_query {
-            self.get_gpt_summary(&content, Some(query)).await?
-        } else if self.is_sql_file(path) {
-            self.get_sql_summary(&content).await?
-        } else {
-            self.get_gpt_summary(&content, None).await?
-        };
+        // Calculate appropriate summary length based on file size and type
+        let summary_length = self.calculate_summary_length(metadata.len(), path);
+        
+        // Generate new summary with dynamic length
+        let summary = self.get_gpt_summary(&content, custom_query, summary_length).await?;
 
         // Add to cache
         self.add_to_cache(content_hash, summary.clone())?;
         Ok(Some(summary))
     }
 
+    async fn get_gpt_summary(&self, content: &str, custom_prompt: Option<&str>, summary_length: u32) -> Result<String> {
+        let prompt = if let Some(query) = custom_prompt {
+            format!("{} (respond in {})\n\n{}", query, self.language, content)
+        } else {
+            format!(
+                "Provide a detailed summary of the following file content in approximately {} words in {}. \
+                Focus on its main purpose, key elements, and important details:\n\n{}",
+                summary_length, self.language, content
+            )
+        };
+
+        self.make_gpt_request(&prompt, summary_length).await
+    }
+
+    async fn make_gpt_request(&self, prompt: &str, max_tokens: u32) -> Result<String> {
+        let response = ureq::post("https://api.openai.com/v1/chat/completions")
+            .set("Authorization", &format!("Bearer {}", self.api_key))
+            .set("Content-Type", "application/json")
+            .send_json(json!({
+                "model": MODEL,
+                "messages": [{
+                    "role": "user",
+                    "content": prompt
+                }],
+                "max_tokens": max_tokens,
+                "temperature": 0.7
+            }))?
+            .into_json::<ChatCompletion>()?;
+
+        Ok(response.choices[0].message.content.clone())
+    }
+
     pub async fn collect_for_batch(&self, path: &Path) -> Result<()> {
-        if !self.is_supported_file(path) {
+        if self.should_ignore(path) {
             return Ok(());
         }
 
@@ -206,158 +461,102 @@ impl GPTClient {
 
     pub async fn summarize_batch(&self, custom_query: Option<&str>) -> Result<BatchResult> {
         let contents = self.collected_contents.lock().unwrap();
+        
         if contents.is_empty() {
             return Ok(BatchResult::Summaries(HashMap::new()));
         }
 
-        // For custom queries, combine all contents and return a single answer
+        let combined_content = contents
+            .iter()
+            .map(|(path, content)| format!("File: {}\nContent:\n{}\n\n", path, content))
+            .collect::<String>();
+
         if let Some(query) = custom_query {
-            let combined_content = contents
-                .iter()
-                .map(|(path, content)| format!("File: {}\nContent:\n{}", path, content))
-                .collect::<Vec<_>>()
-                .join("\n\n===FILE SEPARATOR===\n\n");
-
-            let prompt = format!(
-                "{} (respond in {})\n\nAnalyze the following files to answer the question:\n\n{}",
-                query, self.language, combined_content
-            );
-
-            let response = self.make_gpt_request(&prompt).await?;
-            return Ok(BatchResult::Answer(response));
-        }
-
-        // For regular summaries, keep the existing logic
-        let mut summaries = HashMap::new();
-        let mut uncached_contents = Vec::new();
-
-        for (path, content) in contents.iter() {
-            let content_hash = self.calculate_content_hash(content, custom_query);
-            if let Some(cached_summary) = self.get_from_cache(&content_hash) {
-                summaries.insert(path.clone(), cached_summary);
-            } else {
-                uncached_contents.push((path.clone(), content.clone(), content_hash));
-            }
-        }
-
-        if !uncached_contents.is_empty() {
-            let files_content = uncached_contents
-                .iter()
-                .map(|(path, content, _)| format!("File: {}\nContent:\n{}", path, content))
-                .collect::<Vec<_>>()
-                .join("\n\n===FILE SEPARATOR===\n\n");
-
-            let prompt = format!(
-                "Analyze multiple files and provide a {} summary for each ({} words) in {}. \
-                Focus on the main purpose of each file. Format the response as:\n\
-                File1: Summary of first file\n\
-                File2: Summary of second file\n\
-                And so on.\n\n{}",
-                self.summary_length, self.max_tokens, self.language, files_content
-            );
-
-            let response = self.make_gpt_request(&prompt).await?;
-            let batch_summaries = self.parse_batch_summaries(&response)?;
-
-            for (path, _, content_hash) in uncached_contents {
-                if let Some(summary) = batch_summaries.get(&path) {
-                    self.add_to_cache(content_hash, summary.clone())?;
-                    summaries.insert(path, summary.clone());
+            // For custom queries, return a direct answer
+            let response = self.get_gpt_summary(&combined_content, Some(query), 500).await?;
+            Ok(BatchResult::Answer(response))
+        } else {
+            // For regular batch summaries, return a map of file summaries
+            let mut summaries = HashMap::new();
+            for (path, content) in contents.iter() {
+                if let Some(summary) = self.summarize_file(Path::new(path), None).await? {
+                    summaries.insert(path.clone(), summary);
                 }
             }
+            Ok(BatchResult::Summaries(summaries))
         }
-
-        Ok(BatchResult::Summaries(summaries))
-    }
-
-    async fn get_gpt_summary(&self, content: &str, custom_prompt: Option<&str>) -> Result<String> {
-        let prompt = if let Some(query) = custom_prompt {
-            format!("{} (respond in {})\n\n{}", query, self.language, &content[..content.len().min(4000)])
-        } else {
-            format!(
-                "Summarize the following file content in a {} summary ({} words) in {}. \
-                Focus on its main purpose and key elements:\n\n{}",
-                self.summary_length, self.max_tokens, self.language, &content[..content.len().min(4000)]
-            )
-        };
-
-        self.make_gpt_request(&prompt).await
-    }
-
-    async fn get_sql_summary(&self, content: &str) -> Result<String> {
-        let prompt = format!(
-            "Analyze the following SQL code and provide a {} summary ({} words) in {}. \
-            Focus on: table operations (CREATE, ALTER, DROP), main table names, \
-            key relationships, and important constraints or indices if present:\n\n{}",
-            self.summary_length, self.max_tokens, self.language, &content[..content.len().min(4000)]
-        );
-
-        self.make_gpt_request(&prompt).await
-    }
-
-    async fn make_gpt_request(&self, prompt: &str) -> Result<String> {
-        let response = ureq::post("https://api.openai.com/v1/chat/completions")
-            .set("Authorization", &format!("Bearer {}", self.api_key))
-            .set("Content-Type", "application/json")
-            .send_json(json!({
-                "model": MODEL,
-                "messages": [{
-                    "role": "user",
-                    "content": prompt
-                }],
-                "max_tokens": self.max_tokens,
-                "temperature": 0.7
-            }))?
-            .into_json::<ChatCompletion>()?;
-
-        Ok(response.choices[0].message.content.clone())
     }
 
     fn is_supported_file(&self, path: &Path) -> bool {
-        let mime_type = mime_guess::from_path(path).first_or_octet_stream();
-        mime_type.type_() == "text"
-            || mime_type.subtype() == "javascript"
-            || mime_type.subtype() == "json"
-            || mime_type.subtype() == "xml"
-            || mime_type.subtype() == "sql"
-            || path.extension().map_or(false, |ext| ext == "sql")
-    }
+        // Check file extension first
+        let is_supported_ext = path.extension()
+            .and_then(|ext| ext.to_str())
+            .map(|ext| {
+                matches!(ext.to_lowercase().as_str(), 
+                    "rs" | "py" | "js" | "ts" | "java" | "cpp" | "c" |
+                    "md" | "txt" | "rst" | "adoc" | "pdf" | "doc" | "docx" | 
+                    "json" | "yaml" | "yml" | "toml" | "ini" | "env" | "conf" | "config" | 
+                    "sh" | "bash" | "zsh" | "fish" | "ps1" | "bat" | "cmd" | 
+                    "sql" | "pgsql" | "mysql" | 
+                    "xml" | "gradle" | "pom" | "lock" | "cargo" |
+                    "html" | "css" | "scss" | "sass" | "less" | "jsx" | "tsx" | "vue" | "svelte" |
+                    "go" | "rb" | "php" | "scala" | "swift" | "kt" // Added missing file extensions
+                )
+            })
+            .unwrap_or(false);
 
-    fn is_sql_file(&self, path: &Path) -> bool {
-        path.extension().map_or(false, |ext| ext == "sql")
-            || mime_guess::from_path(path)
-                .first_or_octet_stream()
-                .subtype() == "sql"
-    }
+        if is_supported_ext {
+            return true;
+        }
 
-    fn parse_batch_summaries(&self, text: &str) -> Result<HashMap<String, String>> {
-        let mut summaries = HashMap::new();
-        let mut current_file = None;
-        let mut current_summary = Vec::new();
-
-        for line in text.lines() {
-            if line.trim().is_empty() {
-                continue;
-            }
-
-            if let Some(pos) = line.find(':') {
-                if !line.starts_with(' ') {
-                    if let Some(file) = current_file.take() {
-                        summaries.insert(file, current_summary.join(" "));
-                        current_summary.clear();
-                    }
-                    current_file = Some(line[..pos].trim().to_string());
-                    current_summary.push(line[pos + 1..].trim());
+        // Check for shebang in the first line
+        if let Ok(file) = fs::File::open(path) {
+            let reader = BufReader::new(file);
+            if let Some(Ok(first_line)) = reader.lines().next() {
+                if first_line.starts_with("#!") && 
+                   (first_line.contains("/bin/bash") || 
+                    first_line.contains("/bin/sh") || 
+                    first_line.contains("/bin/zsh")) {
+                    return true;
                 }
-            } else if let Some(_) = current_file {
-                current_summary.push(line.trim());
             }
         }
 
-        if let Some(file) = current_file {
-            summaries.insert(file, current_summary.join(" "));
-        }
+        false
+    }
+}
 
-        Ok(summaries)
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use tempfile::NamedTempFile;
+    use std::io::Write;
+
+    #[test]
+    fn test_file_type_detection() {
+        let client = GPTClient::new("medium", "english", false, None).unwrap();
+        
+        // Test shell script extensions
+        let sh_path = PathBuf::from("test.sh");
+        assert_eq!(client.get_file_type_multiplier(&sh_path), 1.4);
+        
+        // Test markdown files
+        let md_path = PathBuf::from("test.md");
+        assert_eq!(client.get_file_type_multiplier(&md_path), 1.5);
+    }
+
+    #[test]
+    fn test_shebang_detection() {
+        let client = GPTClient::new("medium", "english", false, None).unwrap();
+        
+        // Create temporary files with different shebangs
+        let mut bash_file = NamedTempFile::new().unwrap();
+        writeln!(bash_file, "#!/bin/bash\necho 'test'").unwrap();
+        assert_eq!(client.get_file_type_multiplier(bash_file.path()), 1.4);
+        
+        let mut sh_file = NamedTempFile::new().unwrap();
+        writeln!(sh_file, "#!/bin/sh\necho 'test'").unwrap();
+        assert_eq!(client.get_file_type_multiplier(sh_file.path()), 1.4);
     }
 }

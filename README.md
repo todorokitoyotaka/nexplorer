@@ -24,27 +24,19 @@ GPTを活用したインテリジェントなファイルエクスプローラ�
 ```bash
 nexplorer [オプション] <パス>
 
-オプション:
-  --ai                    GPTによるファイル要約機能を有効化
-  --ai-query <クエリ>      カスタム要約クエリを指定
-                         例: --ai-query "このコードの主な機能は何ですか？"
-  
-  --ai-whole <クエリ>      ディレクトリ内の全ファイルを一括で分析
-                         例: --ai-whole "セキュリティの観点から分析してください"
-  
-  --max-depth <数値>      探索する最大ディレクトリ深度（デフォルト: 3）
-                         例: --max-depth 5
-  
-  --summary-length <長さ>  要約の長さを指定
-                         選択肢:
-                         - short  : 約50語
-                         - medium : 約100語（デフォルト）
-                         - long   : 約200語
-  
-  --language <言語>       要約の言語を指定（デフォルト: english）
-                         例: --language japanese
-  
-  --update               キャッシュを強制的に更新
+オプション: --ai GPTによるファイル要約機能を有効化 --ai-query <クエリ> カスタム要約クエリを指定 例: --ai-query "このコードの主な機能は何ですか？"
+
+--ai-whole <クエリ> ディレクトリ内の全ファイルを一括で分析 例: --ai-whole "セキュリティの観点から分析してください"
+
+--max-depth <数値> 探索する最大ディレクトリ深度（デフォルト: 3） 例: --max-depth 5
+
+--ignore '<パターン>' 探索を無視するパターン 例: --ignore '*generated*'
+
+--summary-length <長さ> 要約の長さを指定 選択肢: - smart 自動判定 - short : 約50語 - medium : 約100語（デフォルト） - long : 約200語 - super : 約500語 または任意の数値（例: 150）
+
+--language <言語> 要約の言語を指定（デフォルト: english） 例: --language japanese
+
+--update キャッシュを強制的に更新
 ```
 
 ### 使用例
@@ -63,7 +55,7 @@ nexplorer --ai --language japanese --summary-length long .
 nexplorer --ai-query "このコードのパフォーマンスに関する問題点は？" src/
 
 # プロジェクト全体のセキュリティ分析
-nexplorer --ai-whole "セキュリティの脆弱性について分析してください" .
+nexplorer --summary-length smart --ai-whole "セキュリティの脆弱性について分析してください" .
 ```
 
 ## 🚀 インストール
@@ -180,26 +172,26 @@ An intelligent file explorer tool powered by GPT that enables efficient director
 nexplorer [OPTIONS] <PATH>
 
 Options:
-  --ai                    Enable GPT-powered file summarization
-  --ai-query <QUERY>      Specify custom summarization query
-                         Example: --ai-query "What are the main functions of this code?"
-  
-  --ai-whole <QUERY>      Analyze all files in directory as a batch
-                         Example: --ai-whole "Analyze from a security perspective"
-  
-  --max-depth <NUMBER>    Maximum directory depth to explore (default: 3)
-                         Example: --max-depth 5
-  
-  --summary-length <LENGTH> Specify summary length
-                         Choices:
-                         - short  : ~50 words
-                         - medium : ~100 words (default)
-                         - long   : ~200 words
-  
-  --language <LANG>       Specify summary language (default: english)
-                         Example: --language spanish
-  
-  --update               Force update cache entries
+      --ai
+          Enable GPT-powered file summarization
+      --ai-query <AI_QUERY>
+          Custom query for GPT summarization
+      --ai-whole <AI_WHOLE>
+          Summarize all files in a single batch with optional custom query
+      --max-depth <MAX_DEPTH>
+          Maximum directory depth to explore [default: 3]
+      --summary-length <SUMMARY_LENGTH>
+          Length of the summary (smart: automatic based on file size, short: ~50 words, medium: ~100 words, long: ~200 words, super: ~500 words, or a custom number) [default: medium]
+      --language <LANGUAGE>
+          Language for the summary (e.g., "english", "japanese", etc.) [default: english]
+      --update
+          Force update cache entries
+      --ignore <IGNORE>
+          Custom ignore patterns (comma-separated)
+  -h, --help
+          Print help
+  -V, --version
+          Print version
 ```
 
 ### Usage Examples
@@ -218,7 +210,7 @@ nexplorer --ai --language spanish --summary-length long .
 nexplorer --ai-query "What are the performance concerns in this code?" src/
 
 # Analyze entire project for security
-nexplorer --ai-whole "Analyze for security vulnerabilities" .
+nexplorer --summary-length smart --ai-whole "Analyze for security vulnerabilities" .
 ```
 
 ## 🚀 Installation
