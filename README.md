@@ -23,15 +23,15 @@ GPTを活用したインテリジェントなファイルエクスプローラ�
 
 ```bash
 # リポジトリのクローン
-git clone https://github.com/yourusername/gpt-file-explorer.git
-cd gpt-file-explorer
+git clone https://github.com/todorokitoyotaka/nexplorer
+cd nexplorer
 
 # 依存関係のインストール
 cargo build --release
 
 # バイナリを~/binディレクトリにインストール
 mkdir -p ~/bin
-cp target/release/gpt-file-explorer ~/bin/
+cp target/release/nexplorer ~/bin/
 
 # PATHが設定されていない場合は、~/.bashrcまたは~/.zshrcに以下を追加
 echo 'export PATH="$HOME/bin:$PATH"' >> ~/.bashrc  # または ~/.zshrc
@@ -40,7 +40,7 @@ echo 'export PATH="$HOME/bin:$PATH"' >> ~/.bashrc  # または ~/.zshrc
 source ~/.bashrc  # または source ~/.zshrc
 
 # 実行権限の設定
-chmod +x ~/bin/gpt-file-explorer
+chmod +x ~/bin/nexplorer
 ```
 
 注: インストール後、新しいターミナルを開くか、sourceコマンドでPATH設定を反映させてください。
@@ -168,15 +168,15 @@ An intelligent file explorer tool powered by GPT that enables efficient director
 
 ```bash
 # Clone the repository
-git clone https://github.com/yourusername/gpt-file-explorer.git
-cd gpt-file-explorer
+git clone https://github.com/todorokitoyotaka/nexplorer
+cd nexplorer
 
 # Install dependencies
 cargo build --release
 
 # Install binary to ~/bin directory
 mkdir -p ~/bin
-cp target/release/gpt-file-explorer ~/bin/
+cp target/release/nexplorer ~/bin/
 
 # Add to PATH in ~/.bashrc or ~/.zshrc if not already set
 echo 'export PATH="$HOME/bin:$PATH"' >> ~/.bashrc  # or ~/.zshrc
@@ -185,7 +185,8 @@ echo 'export PATH="$HOME/bin:$PATH"' >> ~/.bashrc  # or ~/.zshrc
 source ~/.bashrc  # or source ~/.zshrc
 
 # Set execution permissions
-chmod +x ~/bin/gpt-file-explorer
+chmod +x ~/bin/nexplorer
+. ~/.bashrc
 ```
 
 Note: After installation, open a new terminal or use the source command to reflect PATH settings.
