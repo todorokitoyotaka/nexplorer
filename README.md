@@ -19,11 +19,58 @@ GPTを活用したインテリジェントなファイルエクスプローラ�
 - ⚡ 効率的なキャッシュシステム
 - 🔄 カスタマイズ可能なAIクエリ
 
+## ⚙️ 設定オプション
+
+```bash
+nexplorer [オプション] <パス>
+
+オプション:
+  --ai                    GPTによるファイル要約機能を有効化
+  --ai-query <クエリ>      カスタム要約クエリを指定
+                         例: --ai-query "このコードの主な機能は何ですか？"
+  
+  --ai-whole <クエリ>      ディレクトリ内の全ファイルを一括で分析
+                         例: --ai-whole "セキュリティの観点から分析してください"
+  
+  --max-depth <数値>      探索する最大ディレクトリ深度（デフォルト: 3）
+                         例: --max-depth 5
+  
+  --summary-length <長さ>  要約の長さを指定
+                         選択肢:
+                         - short  : 約50語
+                         - medium : 約100語（デフォルト）
+                         - long   : 約200語
+  
+  --language <言語>       要約の言語を指定（デフォルト: english）
+                         例: --language japanese
+  
+  --update               キャッシュを強制的に更新
+```
+
+### 使用例
+
+```bash
+# 基本的な使用方法（現在のディレクトリを探索）
+nexplorer .
+
+# GPT要約機能を有効化して特定のディレクトリを探索
+nexplorer --ai /path/to/project
+
+# 日本語で長めの要約を生成
+nexplorer --ai --language japanese --summary-length long .
+
+# カスタムクエリで特定の分析を実行
+nexplorer --ai-query "このコードのパフォーマンスに関する問題点は？" src/
+
+# プロジェクト全体のセキュリティ分析
+nexplorer --ai-whole "セキュリティの脆弱性について分析してください" .
+```
+
 ## 🚀 インストール
 
 ```bash
 # リポジトリのクローン
-git clone https://github.com/todorokitoyotaka/nexplorer
+git clone https://github.com/todorokitoyotaka/nexplorer.git
 cd nexplorer
 
 # 依存関係のインストール
@@ -43,112 +90,75 @@ source ~/.bashrc  # または source ~/.zshrc
 chmod +x ~/bin/nexplorer
 ```
 
-注: インストール後、新しいターミナルを開くか、sourceコマンドでPATH設定を反映させてください。
+## ❗ トラブルシューティング
 
-## 🔧 環境設定
+### APIキー関連の問題
 
-1. OpenAI APIキーの設定:
-```bash
-export OPENAI_API_KEY="your-api-key"
-```
+1. **エラー**: `OPENAI_API_KEY environment variable is not set`
+   - **解決方法**: 
+     - 環境変数に`OPENAI_API_KEY`を設定してください
+     - `export OPENAI_API_KEY='your-api-key'`を実行するか、~/.bashrcに追加してください
+     - シェルを再起動して変更を反映させてください
 
-## 📖 使い方
+2. **エラー**: `Invalid API key provided`
+   - **解決方法**:
+     - APIキーが正しく設定されているか確認してください
+     - OpenAIのダッシュボードで有効なAPIキーであることを確認してください
 
-### 基本的な使用方法
+### キャッシュ関連の問題
 
-```bash
-# 現在のディレクトリの探索と要約
-cargo run -- --ai .
+1. **問題**: キャッシュが更新されない
+   - **解決方法**:
+     - `--update`フラグを使用してキャッシュを強制的に更新: 
+       ```bash
+       nexplorer --ai --update <パス>
+       ```
+     - `.cache`ディレクトリを削除して再実行してください
 
-# 特定のディレクトリの探索
-cargo run -- --ai /path/to/directory
+2. **問題**: キャッシュディレクトリのパーミッションエラー
+   - **解決方法**:
+     - キャッシュディレクトリの権限を確認:
+       ```bash
+       chmod -R 755 .cache
+       ```
 
-# 特定の言語での要約生成
-cargo run -- --ai --language japanese /path/to/directory
-```
+### パフォーマンスと制限
 
-### 詳細オプション
+1. **問題**: 大きなファイルの処理が遅い
+   - **解決方法**:
+     - ファイルサイズの制限（1MB）を超えていないか確認
+     - `--max-depth`オプションで探索深度を制限
+     - バッチ処理モード（`--ai-whole`）の使用を検討
 
-```bash
-# 要約の長さを指定
-cargo run -- --ai --summary-length short /path/to/directory
+2. **問題**: メモリ使用量が多い
+   - **解決方法**:
+     - 一度に処理するファイル数を制限
+     - 定期的にキャッシュをクリア
 
-# キャッシュの更新を強制
-cargo run -- --ai --update /path/to/directory
+### 言語とフォーマット
 
-# カスタムAIクエリの実行
-cargo run -- --ai-whole "セキュリティの観点から分析してください" /path/to/directory
-```
+1. **問題**: 要約が指定した言語で出力されない
+   - **解決方法**:
+     - `--language`オプションが正しく設定されているか確認
+     - キャッシュを更新して再試行
+     - サポートされている言語であることを確認
 
-## 🎯 主要機能の詳細
+2. **問題**: 文字化けが発生する
+   - **解決方法**:
+     - ターミナルのエンコーディングをUTF-8に設定
+     - ロケール設定を確認
 
-### サマリー生成
-- ファイル内容の自動要約
-- 3段階の要約長（short/medium/long）
-- コードファイルに最適化された要約アルゴリズム
+### その他の一般的な問題
 
-### キャッシュシステム
-- `.cache`ディレクトリでの効率的な要約保存
-- コンテンツハッシュによる変更検知
-- 言語設定と要約長の追跡
+1. **問題**: 依存関係のインストールエラー
+   - **解決方法**:
+     - Rustとcargoが最新版かを確認
+     - `cargo clean && cargo build --release`を実行
 
-### 多言語サポート
-- 複数言語での要約生成
-- インタラクティブな言語切り替え
-- カスタム言語クエリのサポート
-
-## ⚙️ 設定オプション
-
-| オプション | 説明 | デフォルト値 |
-|------------|------|--------------|
-| `--ai` | GPT要約の有効化 | 無効 |
-| `--language` | 出力言語の指定 | 英語 |
-| `--summary-length` | 要約の長さ（short/medium/long） | medium |
-| `--update` | キャッシュの強制更新 | 無効 |
-| `--ai-whole` | カスタムAIクエリの実行 | なし |
-
-## 🔍 キャッシュシステム
-
-キャッシュは`.cache`ディレクトリに保存され、以下の情報を追跡します：
-- ファイルのコンテンツハッシュ
-- 選択された言語
-- 要約の長さ
-- 生成された要約
-
-## 📝 使用例
-
-### プロジェクト全体の分析
-```bash
-cargo run -- --ai-whole "プロジェクト構造を分析してください" .
-```
-
-### 特定言語でのファイル要約
-```bash
-cargo run -- --ai --language japanese src/main.rs
-```
-
-### キャッシュの更新
-```bash
-cargo run -- --ai --update --language japanese .
-```
-
-## 🤝 貢献について
-
-プロジェクトへの貢献を歓迎します：
-1. このリポジトリをフォーク
-2. 新しいブランチを作成 (`git checkout -b feature/amazing-feature`)
-3. 変更をコミット (`git commit -m 'Add amazing feature'`)
-4. ブランチにプッシュ (`git push origin feature/amazing-feature`)
-5. プルリクエストを作成
-
-## 📜 ライセンス
-
-このプロジェクトはMITライセンスの下で公開されています。
-
-## 🙏 謝辞
-
-- OpenAI - GPTモデルの提供
-- Rustコミュニティ - 素晴らしいツールとライブラリの提供
+2. **問題**: PATHの設定が反映されない
+   - **解決方法**:
+     - シェルの設定ファイル（.bashrcまたは.zshrc）を確認
+     - `source ~/.bashrc`（または`~/.zshrc`）を実行
 
 <a name="english"></a>
 # English
@@ -164,11 +174,58 @@ An intelligent file explorer tool powered by GPT that enables efficient director
 - ⚡ Efficient Cache System
 - 🔄 Customizable AI Queries
 
+## ⚙️ Configuration Options
+
+```bash
+nexplorer [OPTIONS] <PATH>
+
+Options:
+  --ai                    Enable GPT-powered file summarization
+  --ai-query <QUERY>      Specify custom summarization query
+                         Example: --ai-query "What are the main functions of this code?"
+  
+  --ai-whole <QUERY>      Analyze all files in directory as a batch
+                         Example: --ai-whole "Analyze from a security perspective"
+  
+  --max-depth <NUMBER>    Maximum directory depth to explore (default: 3)
+                         Example: --max-depth 5
+  
+  --summary-length <LENGTH> Specify summary length
+                         Choices:
+                         - short  : ~50 words
+                         - medium : ~100 words (default)
+                         - long   : ~200 words
+  
+  --language <LANG>       Specify summary language (default: english)
+                         Example: --language spanish
+  
+  --update               Force update cache entries
+```
+
+### Usage Examples
+
+```bash
+# Basic usage (explore current directory)
+nexplorer .
+
+# Explore specific directory with GPT summarization
+nexplorer --ai /path/to/project
+
+# Generate longer summaries in Spanish
+nexplorer --ai --language spanish --summary-length long .
+
+# Run custom analysis query
+nexplorer --ai-query "What are the performance concerns in this code?" src/
+
+# Analyze entire project for security
+nexplorer --ai-whole "Analyze for security vulnerabilities" .
+```
+
 ## 🚀 Installation
 
 ```bash
 # Clone the repository
-git clone https://github.com/todorokitoyotaka/nexplorer
+git clone https://github.com/todorokitoyotaka/nexplorer.git
 cd nexplorer
 
 # Install dependencies
@@ -186,106 +243,77 @@ source ~/.bashrc  # or source ~/.zshrc
 
 # Set execution permissions
 chmod +x ~/bin/nexplorer
-. ~/.bashrc
 ```
 
-Note: After installation, open a new terminal or use the source command to reflect PATH settings.
+## ❗ Troubleshooting
 
-## 🔧 Configuration
+### API Key Issues
 
-1. Set up OpenAI API key:
-```bash
-export OPENAI_API_KEY="your-api-key"
-```
+1. **Error**: `OPENAI_API_KEY environment variable is not set`
+   - **Solution**: 
+     - Set the `OPENAI_API_KEY` environment variable
+     - Run `export OPENAI_API_KEY='your-api-key'` or add it to ~/.bashrc
+     - Restart your shell to apply changes
 
-## 📖 Usage
+2. **Error**: `Invalid API key provided`
+   - **Solution**:
+     - Verify that your API key is set correctly
+     - Check if the API key is valid in your OpenAI dashboard
 
-### Basic Usage
+### Cache-Related Issues
 
-```bash
-# Explore and summarize current directory
-cargo run -- --ai .
+1. **Issue**: Cache not updating
+   - **Solution**:
+     - Use the `--update` flag to force cache refresh:
+       ```bash
+       nexplorer --ai --update <path>
+       ```
+     - Delete the `.cache` directory and run again
 
-# Explore specific directory
-cargo run -- --ai /path/to/directory
+2. **Issue**: Cache directory permission errors
+   - **Solution**:
+     - Check cache directory permissions:
+       ```bash
+       chmod -R 755 .cache
+       ```
 
-# Generate summaries in specific language
-cargo run -- --ai --language english /path/to/directory
-```
+### Performance and Limitations
 
-### Advanced Options
+1. **Issue**: Slow processing of large files
+   - **Solution**:
+     - Check if file size exceeds limit (1MB)
+     - Limit exploration depth with `--max-depth`
+     - Consider using batch mode (`--ai-whole`)
 
-```bash
-# Specify summary length
-cargo run -- --ai --summary-length short /path/to/directory
+2. **Issue**: High memory usage
+   - **Solution**:
+     - Limit the number of files processed at once
+     - Clear cache periodically
 
-# Force cache update
-cargo run -- --ai --update /path/to/directory
+### Language and Formatting
 
-# Execute custom AI query
-cargo run -- --ai-whole "Analyze from a security perspective" /path/to/directory
-```
+1. **Issue**: Summaries not in specified language
+   - **Solution**:
+     - Verify `--language` option is set correctly
+     - Update cache and retry
+     - Ensure language is supported
 
-## 🎯 Detailed Features
+2. **Issue**: Character encoding problems
+   - **Solution**:
+     - Set terminal encoding to UTF-8
+     - Check locale settings
 
-### Summary Generation
-- Automatic file content summarization
-- Three summary lengths (short/medium/long)
-- Optimized summarization algorithm for code files
+### General Issues
 
-### Cache System
-- Efficient summary storage in `.cache` directory
-- Content change detection via hashing
-- Language preference and summary length tracking
+1. **Issue**: Dependency installation errors
+   - **Solution**:
+     - Verify Rust and cargo are up to date
+     - Run `cargo clean && cargo build --release`
 
-### Multilingual Support
-- Summary generation in multiple languages
-- Interactive language switching
-- Custom language query support
-
-## ⚙️ Configuration Options
-
-| Option | Description | Default Value |
-|--------|-------------|---------------|
-| `--ai` | Enable GPT summarization | Disabled |
-| `--language` | Specify output language | English |
-| `--summary-length` | Summary length (short/medium/long) | medium |
-| `--update` | Force cache update | Disabled |
-| `--ai-whole` | Execute custom AI query | None |
-
-## 🔍 Cache System
-
-The cache is stored in the `.cache` directory and tracks:
-- File content hashes
-- Selected language
-- Summary length
-- Generated summaries
-
-## 📝 Usage Examples
-
-### Project-wide Analysis
-```bash
-cargo run -- --ai-whole "Analyze project structure" .
-```
-
-### File Summary in Specific Language
-```bash
-cargo run -- --ai --language english src/main.rs
-```
-
-### Cache Update
-```bash
-cargo run -- --ai --update --language english .
-```
-
-## 🤝 Contributing
-
-Contributions are welcome:
-1. Fork the repository
-2. Create a feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit changes (`git commit -m 'Add amazing feature'`)
-4. Push to branch (`git push origin feature/amazing-feature`)
-5. Create Pull Request
+2. **Issue**: PATH settings not taking effect
+   - **Solution**:
+     - Check shell configuration file (.bashrc or .zshrc)
+     - Run `source ~/.bashrc` (or `~/.zshrc`)
 
 ## 📜 License
 
