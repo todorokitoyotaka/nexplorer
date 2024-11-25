@@ -1,13 +1,11 @@
 use clap::Parser;
 use std::path::PathBuf;
 use anyhow::Result;
+use env_logger::Env;
+use log::info;
 
-mod file_explorer;
-mod gpt_client;
-mod utils;
-
-use file_explorer::FileExplorer;
-use gpt_client::GPTClient;
+use nexplorer::file_explorer::FileExplorer;
+use nexplorer::gpt_client::GPTClient;
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -47,11 +45,28 @@ struct Args {
     /// Custom ignore patterns (comma-separated)
     #[arg(long)]
     ignore: Option<String>,
+
+    /// Enable debug logging
+    #[arg(long)]
+    debug: bool,
 }
 
 #[tokio::main]
 async fn main() -> Result<()> {
     let args = Args::parse();
+    
+    // Initialize logger with appropriate level based on debug flag and release mode
+    let env = Env::default()
+        .filter_or("RUST_LOG", if args.debug {
+            "debug"
+        } else if cfg!(debug_assertions) {
+            "info"
+        } else {
+            "warn"
+        });
+    env_logger::init_from_env(env);
+
+    info!("Starting nexplorer with {} path(s)", args.paths.len());
     
     let mut explorer = FileExplorer::new(args.max_depth);
 

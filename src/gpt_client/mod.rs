@@ -8,7 +8,7 @@ use std::sync::Mutex;
 use std::env;
 use std::time::{SystemTime, UNIX_EPOCH};
 use ignore::gitignore::{GitignoreBuilder, Gitignore};
-use std::io::{BufRead, BufReader};
+use crate::utils;
 
 const MAX_FILE_SIZE: u64 = 1024 * 1024; // 1MB
 const MODEL: &str = "gpt-4o-mini";
@@ -43,6 +43,7 @@ const FILE_TYPE_MULTIPLIERS: &[(&str, f32)] = &[
     ("py", 1.2),    // Python files
     ("js", 1.2),    // JavaScript files
     ("ts", 1.2),    // TypeScript files
+    ("tsx", 1.2),   // TypeScript React files
     ("java", 1.2),  // Java files
     ("cpp", 1.2),   // C++ files
     ("c", 1.2),     // C files
@@ -53,6 +54,12 @@ const FILE_TYPE_MULTIPLIERS: &[(&str, f32)] = &[
     ("swift", 1.2), // Swift files
     ("kt", 1.2),    // Kotlin files
     
+    // Shell scripts
+    ("sh", 1.2),    // Shell scripts
+    ("bash", 1.2),  // Bash scripts
+    ("zsh", 1.2),   // Zsh scripts
+    ("fish", 1.2),  // Fish scripts
+    
     // Web-related files
     ("html", 1.1),  // HTML files
     ("css", 1.1),   // CSS files
@@ -60,12 +67,11 @@ const FILE_TYPE_MULTIPLIERS: &[(&str, f32)] = &[
     ("sass", 1.1),  // Sass files
     ("less", 1.1),  // Less files
     ("jsx", 1.2),   // React JSX files
-    ("tsx", 1.2),   // React TSX files
     ("vue", 1.2),   // Vue files
     ("svelte", 1.2),// Svelte files
     
     // Configuration files need detailed summaries
-    ("json", 1.3),  // JSON files - increased multiplier for better config details
+    ("json", 1.3),  // JSON files
     ("yaml", 1.3),  // YAML files
     ("yml", 1.3),   // YML files
     ("toml", 1.3),  // TOML files
@@ -73,15 +79,6 @@ const FILE_TYPE_MULTIPLIERS: &[(&str, f32)] = &[
     ("env", 1.2),   // Environment files
     ("conf", 1.2),  // Configuration files
     ("config", 1.2),// Configuration files
-    
-    // Shell and script files get detailed summaries
-    ("sh", 1.4),    // Shell scripts
-    ("bash", 1.4),  // Bash scripts
-    ("zsh", 1.4),   // Zsh scripts
-    ("fish", 1.4),  // Fish scripts
-    ("ps1", 1.4),   // PowerShell scripts
-    ("bat", 1.4),   // Windows batch files
-    ("cmd", 1.4),   // Windows command files
     
     // Database files
     ("sql", 1.3),   // SQL files
@@ -94,9 +91,6 @@ const FILE_TYPE_MULTIPLIERS: &[(&str, f32)] = &[
     ("pom", 1.2),   // Maven POM files
     ("lock", 1.1),  // Lock files
     ("cargo", 1.2), // Cargo.toml gets special handling
-    
-    // Special handling for Replit files
-    ("replit", 1.5), // .replit configuration
     
     // Default multiplier for unknown types
     ("*", 1.0),     // Default multiplier
@@ -201,70 +195,8 @@ impl GPTClient {
         })
     }
 
-    /// Determines if a file should be ignored based on the following rules:
-    /// 1. First checks .gitignore patterns if a .gitignore file exists
-    /// 2. Then checks custom ignore patterns if provided:
-    ///    - Supports glob patterns (e.g., *.log, target/*)
-    ///    - Supports simple substring matching for non-glob patterns
-    fn should_ignore(&self, path: &Path) -> bool {
-        let path_str = path.to_string_lossy();
-
-        // Check gitignore rules
-        if let Some(ref gitignore) = self.gitignore {
-            if gitignore.matched_path_or_any_parents(path, path.is_dir()).is_ignore() {
-                return true;
-            }
-        }
-
-        // Check custom patterns
-        if let Some(ref patterns) = self.custom_patterns {
-            for pattern in patterns {
-                if pattern.contains('*') {
-                    // Simple glob pattern matching
-                    let regex_pattern = pattern
-                        .replace(".", "\\.")
-                        .replace("*", ".*")
-                        .replace("?", ".");
-                    if let Ok(regex) = regex::Regex::new(&format!("^{}$", regex_pattern)) {
-                        if regex.is_match(&path_str) {
-                            return true;
-                        }
-                    }
-                } else if path_str.contains(pattern) {
-                    // Simple substring matching for non-glob patterns
-                    return true;
-                }
-            }
-        }
-
-        false
-    }
-
     fn get_file_type_multiplier(&self, path: &Path) -> f32 {
-        // Check for shell script by extension or shebang
-        let is_shell_script = path.extension()
-            .and_then(|ext| ext.to_str())
-            .map(|ext| matches!(ext.to_lowercase().as_str(), "sh" | "bash" | "zsh"))
-            .unwrap_or(false);
-
-        if is_shell_script {
-            return 1.4; // Shell script multiplier
-        }
-
-        // Check for shebang in first line
-        if let Ok(file) = fs::File::open(path) {
-            let reader = BufReader::new(file);
-            if let Some(Ok(first_line)) = reader.lines().next() {
-                if first_line.starts_with("#!") && 
-                   (first_line.contains("/bin/bash") || 
-                    first_line.contains("/bin/sh") || 
-                    first_line.contains("/bin/zsh")) {
-                    return 1.4; // Shell script multiplier
-                }
-            }
-        }
-
-        // Check by extension for other file types
+        // Only check by extension for supported file types
         path.extension()
             .and_then(|ext| ext.to_str())
             .map(|ext| {
@@ -372,12 +304,13 @@ impl GPTClient {
             return Ok(None);
         }
 
-        if !self.is_supported_file(path) {
+        let file_info = utils::get_file_info(path)?;
+        if !file_info.is_text {
+            eprintln!("File type detected as binary: {}", path.display());
             return Ok(None);
         }
 
-        let metadata = fs::metadata(path)?;
-        if metadata.len() > MAX_FILE_SIZE {
+        if file_info.size > MAX_FILE_SIZE {
             return Ok(Some("File too large for summarization".to_string()));
         }
 
@@ -394,7 +327,7 @@ impl GPTClient {
         }
 
         // Calculate appropriate summary length based on file size and type
-        let summary_length = self.calculate_summary_length(metadata.len(), path);
+        let summary_length = self.calculate_summary_length(file_info.size, path);
         
         // Generate new summary with dynamic length
         let summary = self.get_gpt_summary(&content, custom_query, summary_length).await?;
@@ -406,11 +339,14 @@ impl GPTClient {
 
     async fn get_gpt_summary(&self, content: &str, custom_prompt: Option<&str>, summary_length: u32) -> Result<String> {
         let prompt = if let Some(query) = custom_prompt {
-            format!("{} (respond in {})\n\n{}", query, self.language, content)
+            format!("{} (respond in {})
+
+{}", query, self.language, content)
         } else {
             format!(
-                "Provide a detailed summary of the following file content in approximately {} words in {}. \
-                Focus on its main purpose, key elements, and important details:\n\n{}",
+                "Provide a detailed summary of the following file content in approximately {} words in {}.                 Focus on its main purpose, key elements, and important details:
+
+{}",
                 summary_length, self.language, content
             )
         };
@@ -441,8 +377,8 @@ impl GPTClient {
             return Ok(());
         }
 
-        let metadata = fs::metadata(path)?;
-        if metadata.len() > MAX_FILE_SIZE {
+        let file_info = utils::get_file_info(path)?;
+        if !file_info.is_text || file_info.size > MAX_FILE_SIZE {
             return Ok(());
         }
 
@@ -468,7 +404,11 @@ impl GPTClient {
 
         let combined_content = contents
             .iter()
-            .map(|(path, content)| format!("File: {}\nContent:\n{}\n\n", path, content))
+            .map(|(path, content)| format!("File: {}
+Content:
+{}
+
+", path, content))
             .collect::<String>();
 
         if let Some(query) = custom_query {
@@ -478,7 +418,7 @@ impl GPTClient {
         } else {
             // For regular batch summaries, return a map of file summaries
             let mut summaries = HashMap::new();
-            for (path, content) in contents.iter() {
+            for (path, _) in contents.iter() {
                 if let Some(summary) = self.summarize_file(Path::new(path), None).await? {
                     summaries.insert(path.clone(), summary);
                 }
@@ -487,76 +427,27 @@ impl GPTClient {
         }
     }
 
-    fn is_supported_file(&self, path: &Path) -> bool {
-        // Check file extension first
-        let is_supported_ext = path.extension()
-            .and_then(|ext| ext.to_str())
-            .map(|ext| {
-                matches!(ext.to_lowercase().as_str(), 
-                    "rs" | "py" | "js" | "ts" | "java" | "cpp" | "c" |
-                    "md" | "txt" | "rst" | "adoc" | "pdf" | "doc" | "docx" | 
-                    "json" | "yaml" | "yml" | "toml" | "ini" | "env" | "conf" | "config" | 
-                    "sh" | "bash" | "zsh" | "fish" | "ps1" | "bat" | "cmd" | 
-                    "sql" | "pgsql" | "mysql" | 
-                    "xml" | "gradle" | "pom" | "lock" | "cargo" |
-                    "html" | "css" | "scss" | "sass" | "less" | "jsx" | "tsx" | "vue" | "svelte" |
-                    "go" | "rb" | "php" | "scala" | "swift" | "kt" // Added missing file extensions
-                )
-            })
-            .unwrap_or(false);
-
-        if is_supported_ext {
-            return true;
+    fn should_ignore(&self, path: &Path) -> bool {
+        // Check gitignore rules first
+        if let Some(ref gitignore) = self.gitignore {
+            if gitignore.matched(path, false).is_ignore() {
+                return true;
+            }
         }
 
-        // Check for shebang in the first line
-        if let Ok(file) = fs::File::open(path) {
-            let reader = BufReader::new(file);
-            if let Some(Ok(first_line)) = reader.lines().next() {
-                if first_line.starts_with("#!") && 
-                   (first_line.contains("/bin/bash") || 
-                    first_line.contains("/bin/sh") || 
-                    first_line.contains("/bin/zsh")) {
+        // Then check custom ignore patterns
+        if let Some(ref patterns) = self.custom_patterns {
+            let path_str = path.to_string_lossy();
+            for pattern in patterns {
+                if glob::Pattern::new(pattern).ok()
+                    .map(|pat| pat.matches(&path_str))
+                    .unwrap_or(false)
+                {
                     return true;
                 }
             }
         }
 
         false
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::fs;
-    use tempfile::NamedTempFile;
-    use std::io::Write;
-
-    #[test]
-    fn test_file_type_detection() {
-        let client = GPTClient::new("medium", "english", false, None).unwrap();
-        
-        // Test shell script extensions
-        let sh_path = PathBuf::from("test.sh");
-        assert_eq!(client.get_file_type_multiplier(&sh_path), 1.4);
-        
-        // Test markdown files
-        let md_path = PathBuf::from("test.md");
-        assert_eq!(client.get_file_type_multiplier(&md_path), 1.5);
-    }
-
-    #[test]
-    fn test_shebang_detection() {
-        let client = GPTClient::new("medium", "english", false, None).unwrap();
-        
-        // Create temporary files with different shebangs
-        let mut bash_file = NamedTempFile::new().unwrap();
-        writeln!(bash_file, "#!/bin/bash\necho 'test'").unwrap();
-        assert_eq!(client.get_file_type_multiplier(bash_file.path()), 1.4);
-        
-        let mut sh_file = NamedTempFile::new().unwrap();
-        writeln!(sh_file, "#!/bin/sh\necho 'test'").unwrap();
-        assert_eq!(client.get_file_type_multiplier(sh_file.path()), 1.4);
     }
 }

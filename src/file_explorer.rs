@@ -1,5 +1,5 @@
-use std::path::{Path, PathBuf};
-use anyhow::{Result, Context};
+use std::path::Path;
+use anyhow::Result;
 use walkdir::WalkDir;
 use crate::gpt_client::{GPTClient, BatchResult};
 use crate::utils::{format_size, get_file_info};
