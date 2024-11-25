@@ -2,7 +2,7 @@
 
 ![Version](https://img.shields.io/badge/version-0.1.0-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
-[Image 1](image/image.png)
+![Image 1](image/image.png)
 [English](#english) | [日本語](#japanese)
 
 <a name="japanese"></a>
